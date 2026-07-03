@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     report_from_email: str = "Justifica <onboarding@resend.dev>"
     resend_test_recipient: str = ""
+    email_provider: str = "resend"
+    gmail_user: str = ""
+    gmail_app_password: str = ""
     frontend_url: str = "http://localhost:5173"
     scheduler_enabled: bool = True
 

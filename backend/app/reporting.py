@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from datetime import date
+from email.message import EmailMessage
+from email.utils import make_msgid
 from html import escape
+import smtplib
 from typing import Any
 
 import resend
@@ -127,7 +130,10 @@ def send_daily_report(client: Client, report_date: date | None = None, is_test: 
         return {"sent": False, "reason": "notifications_disabled_or_no_recipients"}
 
     data = get_daily_data(client, report_date)
-    test_mode = "onboarding@resend.dev" in settings.report_from_email
+    test_mode = (
+        settings.email_provider != "gmail"
+        and "onboarding@resend.dev" in settings.report_from_email
+    )
     recipients = (
         [
             email for email in config["recipients"]
@@ -140,13 +146,30 @@ def send_daily_report(client: Client, report_date: date | None = None, is_test: 
             "El remitente de prueba solo puede enviar al correo propietario de la cuenta Resend"
         )
     try:
-        resend.api_key = settings.resend_api_key
-        result = resend.Emails.send({
-            "from": settings.report_from_email,
-            "to": recipients,
-            "subject": f"{'[PRUEBA] ' if is_test else ''}Reporte diario de justificaciones · {report_date.strftime('%d/%m/%Y')}",
-            "html": render_email(data, config.get("report_sections") or {}),
-        })
+        subject = f"{'[PRUEBA] ' if is_test else ''}Reporte diario de justificaciones · {report_date.strftime('%d/%m/%Y')}"
+        html_body = render_email(data, config.get("report_sections") or {})
+        if settings.email_provider == "gmail":
+            message = EmailMessage()
+            message["From"] = settings.report_from_email
+            message["To"] = settings.gmail_user
+            message["Bcc"] = ", ".join(recipients)
+            message["Subject"] = subject
+            message["Message-ID"] = make_msgid(domain="gmail.com")
+            message.set_content("Reporte diario de Justifica Admin. Abre este mensaje en un cliente compatible con HTML.")
+            message.add_alternative(html_body, subtype="html")
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
+                smtp.login(settings.gmail_user, settings.gmail_app_password)
+                smtp.send_message(message)
+            email_id = message["Message-ID"]
+        else:
+            resend.api_key = settings.resend_api_key
+            result = resend.Emails.send({
+                "from": settings.report_from_email,
+                "to": recipients,
+                "subject": subject,
+                "html": html_body,
+            })
+            email_id = result.get("id")
         if not is_test:
             client.table("report_deliveries").insert({
                 "report_date": report_date.isoformat(),
@@ -155,7 +178,7 @@ def send_daily_report(client: Client, report_date: date | None = None, is_test: 
             }).execute()
         return {
             "sent": True,
-            "email_id": result.get("id"),
+            "email_id": email_id,
             "recipients": len(recipients),
             "configured_recipients": len(config["recipients"]),
             "test_mode": test_mode,

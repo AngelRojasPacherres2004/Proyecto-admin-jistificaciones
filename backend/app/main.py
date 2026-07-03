@@ -14,8 +14,14 @@ client: Client = create_client(settings.supabase_url, settings.supabase_service_
 scheduler = BackgroundScheduler(timezone="America/Lima")
 
 
+def email_provider_configured() -> bool:
+    if settings.email_provider == "gmail":
+        return bool(settings.gmail_user and settings.gmail_app_password)
+    return bool(settings.resend_api_key)
+
+
 def scheduled_report() -> None:
-    if not settings.resend_api_key:
+    if not email_provider_configured():
         return
     rows = client.table("notification_settings").select("*").eq("id", 1).limit(1).execute().data or []
     config = rows[0] if rows else None
@@ -125,20 +131,20 @@ def health() -> dict[str, str]:
 
 @app.post("/api/reports/daily/send")
 def trigger_daily_report(_: str = Depends(require_admin)) -> dict:
-    if not settings.resend_api_key:
+    if not email_provider_configured():
         raise HTTPException(
             status_code=503,
-            detail="Falta configurar RESEND_API_KEY en backend/.env",
+            detail="Faltan las credenciales del proveedor de correo",
         )
     return send_daily_report(client)
 
 
 @app.post("/api/reports/daily/test")
 def test_daily_report(_: str = Depends(require_admin)) -> dict:
-    if not settings.resend_api_key:
+    if not email_provider_configured():
         raise HTTPException(
             status_code=503,
-            detail="Falta configurar RESEND_API_KEY en backend/.env",
+            detail="Faltan las credenciales del proveedor de correo",
         )
     return send_daily_report(client, is_test=True)
 
@@ -305,9 +311,17 @@ def notification_health(_: str = Depends(require_admin)) -> dict:
         or []
     )
     return {
-        "provider_configured": bool(settings.resend_api_key),
+        "provider": settings.email_provider,
+        "provider_configured": (
+            bool(settings.gmail_user and settings.gmail_app_password)
+            if settings.email_provider == "gmail"
+            else bool(settings.resend_api_key)
+        ),
         "sender": settings.report_from_email,
-        "test_mode": "onboarding@resend.dev" in settings.report_from_email,
+        "test_mode": (
+            settings.email_provider != "gmail"
+            and "onboarding@resend.dev" in settings.report_from_email
+        ),
         "test_recipient": settings.resend_test_recipient or None,
         "deliveries": [
             {
