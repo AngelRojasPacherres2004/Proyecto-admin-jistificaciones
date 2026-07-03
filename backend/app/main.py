@@ -291,3 +291,33 @@ def review_legacy_justification(
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail="No se pudo actualizar la justificación") from exc
+
+
+@app.get("/api/admin/notification-health")
+def notification_health(_: str = Depends(require_admin)) -> dict:
+    deliveries = (
+        client.table("report_deliveries")
+        .select("id,report_date,recipients,status,error_message,sent_at")
+        .order("sent_at", desc=True)
+        .limit(6)
+        .execute()
+        .data
+        or []
+    )
+    return {
+        "provider_configured": bool(settings.resend_api_key),
+        "sender": settings.report_from_email,
+        "test_mode": "onboarding@resend.dev" in settings.report_from_email,
+        "test_recipient": settings.resend_test_recipient or None,
+        "deliveries": [
+            {
+                "id": item["id"],
+                "report_date": item["report_date"],
+                "status": item["status"],
+                "sent_at": item["sent_at"],
+                "recipients_count": len(item.get("recipients") or []),
+                "error_message": item.get("error_message"),
+            }
+            for item in deliveries
+        ],
+    }
